@@ -11,3 +11,4 @@ swresample-4.dll
 swscale-7.dll
 input/
 output/
+env/
