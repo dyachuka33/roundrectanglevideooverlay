@@ -1,0 +1,14 @@
+{
+  "InputFile": "./input/1.mp4",
+  "OverlayFile": "./input/overlay.mp4",
+  "OutputFile": "./output/result.mp4",
+  "OutputDimension": {
+    "Width": 576,
+    "Height": 1024
+  },
+  "OverlayDimension": {
+    "Width": 352,
+    "Height": 624,
+    "Radius": 40
+  }
+}
