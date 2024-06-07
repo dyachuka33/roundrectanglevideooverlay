@@ -9,3 +9,5 @@ ffprobe.exe
 postproc-57.dll
 swresample-4.dll
 swscale-7.dll
+input/
+output/
