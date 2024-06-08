@@ -2,6 +2,16 @@ import json
 import subprocess
 import os
 
+#delete all files
+def delete_files_in_directory(directory_path):
+    try:
+        files = os.listdir(directory_path)
+        for file in files:
+            file_path = os.path.join(directory_path, file)
+        if os.path.isfile(file_path):
+            os.remove(file_path)
+    except OSError:
+        print("Error occurred while deleting files.")
 #get the width, height and duration of the video
 def get_video_dimensions(file_path):
     ffprobe_cmd = [
@@ -23,12 +33,8 @@ def get_video_dimensions(file_path):
     return width, height, duration
 
 #crop input video which has size dimention from central part
-def crop_video(input_file, output_file, size, radius = 0):
-    command = ""
-    if radius == 0 :
-        command = f'ffmpeg -y -i {input_file} -c:v libx264 -preset ultrafast -vf "crop={size["Width"]}:{size["Height"]}" {output_file}'
-    else:
-        command = f'ffmpeg -y -i {input_file} -c:v libx264 -preset ultrafast -vf "[0:v]crop={size["Width"]}:{size["Height"]}[crop];[crop]format=yuva420p,geq=lum='+"'p(X,Y)':a='if(gt(abs(W/2-X),W/2-20)*gt(abs(H/2-Y),H/2-20),if(lte(hypot(20-(W/2-abs(W/2-X)),20-(H/2-abs(H/2-Y))),20),255,0),255)'"+ f'" {output_file}'
+def crop_video(input_file, output_file, size):
+    command = f'ffmpeg -y -i {input_file} -c:v libx264 -preset ultrafast -vf "crop={size["Width"]}:{size["Height"]}" {output_file}'
     os.system(command)
 
 #resize video
@@ -37,7 +43,7 @@ def resize_video(input_video, output_video, size):
     os.system(command)
 
 #first resize and then crop to get the biggest cropped and quality video
-def resize_crop_video(input_video, output_video, target_size, radius = 0):
+def resize_crop_video(input_video, output_video, target_size):
     temp_file = "./temp/temp.mp4"
     input_width, input_height, _ = get_video_dimensions(input_video)
     width_ratio = target_size["Width"]/input_width
@@ -50,16 +56,16 @@ def resize_crop_video(input_video, output_video, target_size, radius = 0):
         "Height": resize_height
     }
     resize_video(input_video, temp_file, resize_size)
-    crop_video(temp_file, output_video, target_size, radius)
+    crop_video(temp_file, output_video, target_size)
 
 #overlay overlay_video on top of background_video
-def overlay(background_video, overlay_video, output_file):
-    background_video_width, background_video_height, background_video_duration = get_video_dimensions(background_video)
-    overlay_video_width, overlay_video_height, overlay_video_duration = get_video_dimensions(overlay_video)
-    duration = background_video_duration if background_video_duration < overlay_video_duration else overlay_video_duration
+def overlay_round_video(background_video, overlay_video, output_file, radius=0):
+    background_video_width, background_video_height, _ = get_video_dimensions(background_video)
+    overlay_video_width, overlay_video_height, _ = get_video_dimensions(overlay_video)
+
     overlay_position_x = int((background_video_width - overlay_video_width) / 2)
     overlay_position_y = int((background_video_height - overlay_video_height) / 2)
-    command = f'ffmpeg -y -i {background_video} -i {overlay_video} -filter_complex "[0:v][1:v]overlay={overlay_position_x}:{overlay_position_y}:enable=' + f"'between(t, 0, {duration})'" + f'" -c:v libx264 -preset ultrafast {output_file}'
+    command = f'ffmpeg -y -i {background_video} -i {overlay_video} -c:v libx264 -preset ultrafast -filter_complex "[1:v]format=yuva420p,geq=lum='+f"'p(X,Y)':a='if(gt(abs(W/2-X),W/2-{radius})*gt(abs(H/2-Y),H/2-{radius}),if(lte(hypot({radius}-(W/2-abs(W/2-X)),{radius}-(H/2-abs(H/2-Y))),{radius}),255,0),255)'[overlay];[0:v][overlay]overlay=x={overlay_position_x}:y={overlay_position_y}" + f'" {output_file}'
     os.system(command)
 
 
@@ -76,7 +82,7 @@ temp_overlay_file = "./temp/overlay.mp4"
 
 
 resize_crop_video(input_file, temp_background_file, output_dimension)
-resize_crop_video(overlay_file, temp_overlay_file, overlay_dimension, 40)
-overlay(temp_background_file, temp_overlay_file, output_file)
-
+resize_crop_video(overlay_file, temp_overlay_file, overlay_dimension)
+overlay_round_video(temp_background_file, temp_overlay_file, output_file, 32)
+delete_files_in_directory('./temp')
 f.close()
