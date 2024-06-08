@@ -1,11 +1,8 @@
+import json
 import subprocess
 import os
-import shutil
-import json
-import random
-import time
-from PIL import Image
 
+#get the width, height and duration of the video
 def get_video_dimensions(file_path):
     ffprobe_cmd = [
         'ffprobe',
@@ -25,171 +22,61 @@ def get_video_dimensions(file_path):
 
     return width, height, duration
 
-def zoom(value):
-    crop_width = int(width * value / 100)
-    crop_height = int(height * value / 100)
+#crop input video which has size dimention from central part
+def crop_video(input_file, output_file, size, radius = 0):
+    command = ""
+    if radius == 0 :
+        command = f'ffmpeg -y -i {input_file} -c:v libx264 -preset ultrafast -vf "crop={size["Width"]}:{size["Height"]}" {output_file}'
+    else:
+        command = f'ffmpeg -y -i {input_file} -c:v libx264 -preset ultrafast -vf "[0:v]crop={size["Width"]}:{size["Height"]}[crop];[crop]format=yuva420p,geq=lum='+"'p(X,Y)':a='if(gt(abs(W/2-X),W/2-20)*gt(abs(H/2-Y),H/2-20),if(lte(hypot(20-(W/2-abs(W/2-X)),20-(H/2-abs(H/2-Y))),20),255,0),255)'"+ f'" {output_file}'
+    os.system(command)
 
-    return f"{width-crop_width}:{height-crop_height}"
+#resize video
+def resize_video(input_video, output_video, size):
+    command = f'ffmpeg -y -i {input_video} -c:v libx264 -preset ultrafast -s {size["Width"]}x{size["Height"]} {output_video}'
+    os.system(command)
 
-options = {
-    "blur": {"filter": "boxblur"},
-    "rotate": {"filter": "rotate", "format": lambda value: value * (3.141592 / 180)},
-    "mirror": {"filter": "hflip", "direct": True},
-    "sharpen": {"filter": "unsharp", "format": lambda value: ("3:3:1.5", "5:5:2", "3:3:5", "13:13:2.5", "13:13:5")[value-1]},
-    "pad": {"filter": "pad", "format": lambda value: f"width=iw+{value*2}:height=ih+{value*2}:x={value}:y={value}:color=black"},
-    "speed": {"filter": "setpts", "format": lambda value: f"{1/value}*PTS"},
-    "zoom": {"filter": "crop", "format": zoom},
-    "brigthness": {"filter": "eq", "format": lambda value: f"brightness={value}"},
-    "contrast": {"filter": "eq", "format": lambda value: f"contrast={value}"},
-    "saturation": {"filter": "eq", "format": lambda value: f"saturation={value}"},
-    "gamma": {"filter": "eq", "format": lambda value: f"gamma={value}"}
-    }   
+#first resize and then crop to get the biggest cropped and quality video
+def resize_crop_video(input_video, output_video, target_size, radius = 0):
+    temp_file = "./temp/temp.mp4"
+    input_width, input_height, _ = get_video_dimensions(input_video)
+    width_ratio = target_size["Width"]/input_width
+    height_ratio = target_size["Height"]/input_height
+    ratio = width_ratio if width_ratio < height_ratio else height_ratio
+    resize_width = int((input_width * ratio + 15) / 16 ) * 16
+    resize_height = int ((input_height * ratio + 15) / 16 ) * 16
+    resize_size = {
+        "Width": resize_width,
+        "Height": resize_height
+    }
+    resize_video(input_video, temp_file, resize_size)
+    crop_video(temp_file, output_video, target_size, radius)
 
-
-def generate_ffmpeg_command(input_path, presets, output_path):
-    global width, height, duration_t
-
-    is_image = is_image_file(input_path)
-    width, height, duration_t = get_video_dimensions(input_path)
-
-    #We need to add extra frames for filters, some filters on hardware needs frames to be fixed.
-    command = f'ffmpeg -i "{input_path}" -filter_complex "[0:v]split={len(presets)}{"".join([f"[in{i+1}]" for i in range(len(presets))])};'
-
-    for idx, preset in enumerate(presets, start=1):
-        filters = ""
-
-        for i, value in enumerate(preset):
-            if value == 0:
-                if all(item == 0 for item in preset):
-                    filters = "null"
-                    break
-                continue
-                
-
-            option_dict = options.get(list(options.keys())[i])
-            filter = option_dict.get("filter")
-
-            if "format" in option_dict:
-                filters += f"{filter}={option_dict.get('format')(value)},"
-            elif "direct" in option_dict:
-                filters += f"{filter},"
-            else:
-                filters += f"{filter}={value},"
-
-        if filters != "":
-            filters = filters[:-1:] if filters[-1] == "," else filters
-
-        command += f"[in{idx}]{filters}[out{idx}];"
-        # command += 
-    #todo: bitrate control - bvr, crf, cbr - crf is best but hevc_nvenc doesn't support?
-    #using 2 pass encoding
-    #scaling filter should use the lancz interpolation to improve quality though speed becomes slow
-    #brightness testing.
-    command = command[:-1:] if command[-1] == ";" else command
-
-    filename = os.path.basename(input_path).split('.')[0]
-    if is_image:
-        mappings = "".join([f' -map [out{i+1}] -s {width}x{height} "{output_path}{filename}_{i}.png"' for i in range(len(presets))])
-    else :
-        mappings = "".join([f' -map [out{i+1}] -map 0:a -c:v h264_nvenc -s {width}x{height} -b:v 3500k "{output_path}{filename}_{i}.mp4"' for i in range(len(presets))])
-
-    command = f'{command}"{mappings}'
-
-    return command
-
-def run_ffmpeg_command(command):
+#overlay overlay_video on top of background_video
+def overlay(background_video, overlay_video, output_file):
+    background_video_width, background_video_height, background_video_duration = get_video_dimensions(background_video)
+    overlay_video_width, overlay_video_height, overlay_video_duration = get_video_dimensions(overlay_video)
+    duration = background_video_duration if background_video_duration < overlay_video_duration else overlay_video_duration
+    overlay_position_x = int((background_video_width - overlay_video_width) / 2)
+    overlay_position_y = int((background_video_height - overlay_video_height) / 2)
+    command = f'ffmpeg -y -i {background_video} -i {overlay_video} -filter_complex "[0:v][1:v]overlay={overlay_position_x}:{overlay_position_y}:enable=' + f"'between(t, 0, {duration})'" + f'" -c:v libx264 -preset ultrafast {output_file}'
     os.system(command)
 
 
-def is_image_file(file_path):
-    try:
-        img = Image.open(file_path)
-        img.verify()  # Attempt to open and verify the image file
-        return True
-    except (IOError, SyntaxError):
-        return False
+f = open("settings.json")
+settings = json.load(f)
+input_file = settings["InputFile"]
+overlay_file = settings["OverlayFile"]
+output_file = settings["OutputFile"]
+output_dimension = settings["OutputDimension"]
+overlay_dimension = settings["OverlayDimension"]
 
-def get_presets(json_file):
-    mode = 2
-    if input("1- Auto create presets\n2- Get presets from json\n>>>") == "1":
-        mode = 1
-        num_of_presets = int(input("Number of presets:\n>>>"))
-
-        presets = []
-        for _ in range(num_of_presets):
-            preset = []
-            for key, value in json_file["options"].items():
-                orange = [int(x) for x in value.split(", ")[1].split("-")]
-                preset.append(random.randint(orange[0], orange[1]))
-            presets.append(preset)
-        json_file["presets"] = presets
-    return json_file, mode
+temp_background_file = "./temp/background_file.mp4"
+temp_overlay_file = "./temp/overlay.mp4"
 
 
-def clean_output_folder():
-    print("Clearing output folder...")
-    shutil.rmtree("output")
-    os.mkdir("output/")
+resize_crop_video(input_file, temp_background_file, output_dimension)
+resize_crop_video(overlay_file, temp_overlay_file, overlay_dimension, 40)
+overlay(temp_background_file, temp_overlay_file, output_file)
 
-def main():
-    global config
-    
-    os.system('cls' if os.name == 'nt' else 'clear')
-
-    config = json.load(open('settings.json', 'r'))
-    presets, chosen_mode = get_presets(config)
-    if chosen_mode == 2:
-        if input("\n1-Use all presets\n2-Use selected number of presets\n>>>") == "2":
-            n = int(input("Input number: "))
-            preset_list = presets.get("presets")
-            presets["presets"] = (preset_list * ((n + len(preset_list) - 1) // len(preset_list)))[:n]
-
-    if presets["clear_output_folder"] == "True":
-        clean_output_folder()
-
-    input_path = presets["input_path"] if presets["input_path"][-1] in ["/", "\\"] else presets["input_path"] + "\\"
-    files = os.listdir(input_path)
-    #files = [x.replace(" ", "").replace("(", "-").replace(")", "-") for x in files_dir]
-    
-    os.system('cls' if os.name == 'nt' else 'clear')
-    topaz = "n"
-    resolution = False
-    resolution_str = ('*'.join(resolution) if type(resolution) == list else 'Default') + "\n"
-    header = f"________________________________________\nInput info:\n    Total videos: {len(files)}\n    Size: {round(sum([os.path.getsize('input/' + f) for f in os.listdir('input/')]) / 1000000, 2)} MB\n    Presets: {len(presets.get('presets'))}\nSettings:\n    Multiprocessing: {'Enabled' if config.get('multiprocessing') == 'True' else 'Disabled'}\n{'        Resolution: ' + resolution_str if config.get('multiprocessing') == 'True' else ''}    AI Enchancing: {'Enabled' if topaz == 'y' else 'Disabled'}\n    Output folder auto clean: {'Enabled' if presets.get('clear_output_folder') == 'True' else 'Disabled'}\n________________________________________"
-    print(header)
-    exiftool_commands = presets.get("exiftool_commands")
-    exiftool_commands_num = len(exiftool_commands)
-    for file in files:
-        print(f"Processing: {file}")
-
-        path = presets["input_path"] + file
-
-        output_path = f"output/{file.split('.')[0].replace(' ', '_')}/"
-        os.mkdir(output_path)
-
-        command = generate_ffmpeg_command(path, presets=presets.get("presets"), output_path=output_path)
-
-        run_ffmpeg_command(command)
-
-        
-        if presets["remove_exif"] != "True":
-            continue
-        output_files = os.listdir(output_path)
-        for idx, output_file in enumerate(output_files):
-            outfile = output_path + output_file
-            try:
-                print(f"Removing exif from {outfile}")
-                os.system(f"exiftool -all= -overwrite_original {outfile}")
-                command = exiftool_commands[idx%exiftool_commands_num]
-                command[-1] = outfile
-                subprocess.run(command)
-            except:
-                print("Failed to remove metadata")
-                raise RuntimeWarning
-
-    print(header)
-    print("All videos Done!")
-
-
-if __name__ == "__main__":
-    main()
+f.close()
